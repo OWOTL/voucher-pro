@@ -2,199 +2,195 @@ import streamlit as st
 import pandas as pd
 import io
 
-# --- 0. 全局配置 ---
-st.set_page_config(layout="wide", page_title="专业财务凭证DIY系统")
+# ==========================================
+# 0. 全局配置与样式
+# ==========================================
+st.set_page_config(layout="wide", page_title="财务凭证智能转换引擎 Pro")
 
-# 标题与理念
-st.title("🧮 专业财务凭证 DIY 生成系统")
-st.markdown("### 💡 设计理念：规则即模板，变量即数据，严格的一单一号。")
+st.markdown("""
+<style>
+    .big-font { font-size:20px !important; font-weight: bold; color: #2c3e50; }
+    .success-box { padding: 10px; background-color: #d4edda; color: #155724; border-radius: 5px; }
+    .error-box { padding: 10px; background-color: #f8d7da; color: #721c24; border-radius: 5px; }
+</style>
+""", unsafe_allow_html=True)
 
-# --- 1. 核心功能函数 ---
+st.title("🚀 财务凭证智能转换引擎 (商业旗舰版)")
 
-def load_default_rules():
-    """初始化一个标准的、空的、但是包含必要表头的规则模板"""
+# ==========================================
+# 1. 核心逻辑：规则引擎初始化
+# ==========================================
+def get_default_templates():
+    """定义标准商业软件的预设模板"""
     return pd.DataFrame([
-        # 示例数据，帮助用户理解
-        {"匹配关键词": "收汇", "摘要模板": "收{单位}货款", "借/贷": "借", "科目编码": "1002", "辅助核算": ""},
-        {"匹配关键词": "收汇", "摘要模板": "核销应收账款", "借/贷": "贷", "科目编码": "1122", "辅助核算": "{单位}"},
-        {"匹配关键词": "费用", "摘要模板": "报销{单位}费用", "借/贷": "借", "科目编码": "6602", "辅助核算": "{部门}"},
-        {"匹配关键词": "费用", "摘要模板": "付现金", "借/贷": "贷", "科目编码": "1001", "辅助核算": ""},
+        # 场景1：一借一贷
+        {"业务场景": "收汇", "摘要模板": "收{往来单位}货款", "科目编码": "1002", "方向": "借", "取值公式": "金额", "辅助核算": ""},
+        {"业务场景": "收汇", "摘要模板": "核销应收账款", "科目编码": "1122", "方向": "贷", "取值公式": "金额", "辅助核算": "{往来单位}"},
+        
+        # 场景2：一借多贷 (含税)
+        {"业务场景": "销售开票", "摘要模板": "销售给{往来单位}", "科目编码": "1122", "方向": "借", "取值公式": "金额", "辅助核算": "{往来单位}"},
+        {"业务场景": "销售开票", "摘要模板": "确认收入", "科目编码": "6001", "方向": "贷", "取值公式": "金额/1.13", "辅助核算": ""}, # 模拟除税
+        {"业务场景": "销售开票", "摘要模板": "计提销项税", "科目编码": "2221", "方向": "贷", "取值公式": "金额-金额/1.13", "辅助核算": ""},
     ])
 
-def validate_upload(df):
-    """验证上传格式，返回 (是否通过, 消息/列名列表)"""
-    if df.empty:
-        return False, "文件为空"
-    return True, df.columns.tolist()
+if 'template_df' not in st.session_state:
+    st.session_state.template_df = get_default_templates()
 
-# --- 2. 侧边栏：状态控制 ---
-if 'rules_df' not in st.session_state:
-    st.session_state.rules_df = load_default_rules()
+# ==========================================
+# 2. 界面布局：分步式工作流
+# ==========================================
+tab1, tab2, tab3 = st.tabs(["🏗️ 1. 策略配置 (规则库)", "📥 2. 智能映射与诊断", "📊 3. 结果生成"])
 
-# --- 3. 主界面分步引导 ---
-
-# ==========================================================
-# 步骤 1：定义标准分录规则 (DIY 核心)
-# ==========================================================
-st.markdown("---")
-st.subheader("1️⃣ 设定分录规则 (模板库)")
-st.info("""
-**操作说明：**
-1. **匹配关键词**：这是系统识别业务的唯一标识。例如流水表里有“收汇”，这里就必须写“收汇”。
-2. **智能变量**：支持使用 `{列名}`。例如摘要写 `收{单位}款`，系统会自动把流水里的单位填进去。
-3. **可空项**：除了关键词，其他都可以根据需要留空。
-4. **增删改**：像操作 Excel 一样，直接在表格里修改、添加行、删除行。
-""")
-
-# 使用 data_editor 实现完全自由的行列编辑
-st.session_state.rules_df = st.data_editor(
-    st.session_state.rules_df,
-    num_rows="dynamic",
-    use_container_width=True,
-    key="editor_rules"
-)
-
-# ==========================================================
-# 步骤 2：导入前说明与文件上传
-# ==========================================================
-st.markdown("---")
-st.subheader("2️⃣ 导入流水数据")
-
-c1, c2 = st.columns([1, 2])
-with c1:
-    st.warning("📋 **导入格式要求**")
-    st.markdown("""
-    您的 Excel 文件建议包含以下列（列名可自定义，但逻辑要清晰）：
-    * **日期列**：业务发生时间
-    * **摘要/业务列**：用于匹配规则（如“收汇”、“提现”）
-    * **单位/辅助列**：用于填充变量
-    * **金额列**：借贷金额
+# --- Tab 1: 规则配置 (最灵活的部分) ---
+with tab1:
+    st.markdown('<p class="big-font">核心策略库 (Mapping Rules)</p>', unsafe_allow_html=True)
+    st.info("""
+    **💡 高级用法说明：**
+    1. **业务场景**：这是匹配 Excel 的唯一钥匙。
+    2. **变量注入**：使用 `{列名}` 代表 Excel 中的那一列数据。例如 `{往来单位}`。
+    3. **多行分录**：同一个“业务场景”可以写多行，生成时会自动组合在一起。
+    4. **取值公式**：支持简单计算，如 `金额` 或 `金额*0.06`。
     """)
-
-with c2:
-    uploaded_file = st.file_uploader("拖拽或点击上传 Excel 流水单", type=['xlsx', 'xls'])
-
-# ==========================================================
-# 步骤 3：自动提取与映射 (智能化)
-# ==========================================================
-if uploaded_file:
-    df_raw = pd.read_excel(uploaded_file).fillna("")
     
-    st.success(f"✅ 读取成功！共 {len(df_raw)} 条数据。请告诉系统每一列的含义：")
-    
-    # 智能映射区域
-    cols = df_raw.columns.tolist()
-    
-    # 布局映射选择器
-    m1, m2, m3, m4 = st.columns(4)
-    with m1: map_date = st.selectbox("哪一列是【日期】？", cols, index=0)
-    with m2: map_biz = st.selectbox("哪一列是【业务类型/匹配词】？", cols, index=1 if len(cols)>1 else 0)
-    with m3: map_unit = st.selectbox("哪一列是【单位/辅助信息】？", cols, index=2 if len(cols)>2 else 0)
-    with m4: map_amt = st.selectbox("哪一列是【金额】？", cols, index=3 if len(cols)>3 else 0)
+    # 允许用户像 Excel 一样操作规则库
+    st.session_state.template_df = st.data_editor(
+        st.session_state.template_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        height=400
+    )
 
-    # ==========================================================
-    # 步骤 4：生成与诊断 (严谨逻辑)
-    # ==========================================================
-    st.markdown("---")
-    if st.button("🚀 开始生成凭证 (自动编号)", type="primary"):
-        results = []
-        errors = []
-        rules = st.session_state.rules_df
+# --- Tab 2: 导入与映射 (商业软件的 Mapping 逻辑) ---
+with tab2:
+    st.markdown('<p class="big-font">数据源导入</p>', unsafe_allow_html=True)
+    
+    uploaded_file = st.file_uploader("上传您的业务流水 Excel", type=['xlsx', 'xls'])
+    
+    if uploaded_file:
+        df_raw = pd.read_excel(uploaded_file).fillna("")
+        st.write("✅ **数据预览 (前3行)：**")
+        st.dataframe(df_raw.head(3), use_container_width=True)
         
-        # 预检查规则表必要列
-        required_rule_cols = ["匹配关键词", "摘要模板", "借/贷", "科目编码", "辅助核算"]
-        if not all(col in rules.columns for col in required_rule_cols):
-             st.error(f"❌ 规则表表头被破坏，请确保包含：{required_rule_cols}")
-             st.stop()
+        raw_cols = df_raw.columns.tolist()
+        
+        st.markdown("---")
+        st.markdown("#### 🔗 字段映射 (Mapping)")
+        st.caption("请告诉系统，您的 Excel 列分别代表什么意义？")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: map_biz = st.selectbox("【业务场景】对应哪一列？", raw_cols, index=0, help="用于去规则库匹配")
+        with c2: map_date = st.selectbox("【日期】对应哪一列？", raw_cols, index=min(1, len(raw_cols)-1))
+        with c3: map_amt = st.selectbox("【金额】对应哪一列？", raw_cols, index=min(2, len(raw_cols)-1))
+        with c4: map_unit = st.selectbox("【往来/辅助】对应哪一列？", raw_cols, index=min(3, len(raw_cols)-1))
 
-        # 开始循环处理每一行流水
-        voucher_counter = 1 # 凭证号计数器，从 001 开始
-        
-        progress_bar = st.progress(0)
-        
-        for idx, row in df_raw.iterrows():
-            # 更新进度条
-            progress_bar.progress((idx + 1) / len(df_raw))
+        # 存入 session 供下一步使用
+        st.session_state.mapping = {
+            "biz": map_biz, "date": map_date, "amt": map_amt, "unit": map_unit, "raw_data": df_raw
+        }
+        st.success("映射完成！请前往【步骤3】生成凭证。")
+
+# --- Tab 3: 生成引擎 (核心计算) ---
+with tab3:
+    st.markdown('<p class="big-font">凭证生成控制台</p>', unsafe_allow_html=True)
+    
+    if 'mapping' not in st.session_state or 'raw_data' not in st.session_state.mapping:
+        st.warning("⚠️ 请先在【步骤2】上传数据并完成映射。")
+    else:
+        if st.button("🚀 启动转换引擎", type="primary"):
+            df = st.session_state.mapping['raw_data']
+            mapping = st.session_state.mapping
+            rules = st.session_state.template_df
             
-            # 1. 获取当前流水的业务类型
-            biz_key = str(row[map_biz]).strip()
+            results = []
+            errors = []
+            voucher_id = 1 # 凭证号计数器
             
-            # 2. 去规则库里找匹配的行
-            # 逻辑：查找规则表中“匹配关键词”列等于当前业务类型的所有行
-            matched_rules = rules[rules["匹配关键词"] == biz_key]
-            
-            # 3. 诊断：如果没找到规则
-            if matched_rules.empty:
-                errors.append({
-                    "行号": idx + 2, # Excel从第2行开始
-                    "日期": row[map_date],
-                    "业务内容": biz_key,
-                    "失败原因": "❌ 未在规则表中找到对应的关键词",
-                    "建议操作": f"请在步骤1的规则表中添加一行，关键词填入 '{biz_key}'"
-                })
-                continue # 跳过这一行
-            
-            # 4. 生成凭证 (严格一单一号)
-            v_num = f"{voucher_counter:03d}" # 格式化为 001, 002...
-            
-            for _, rule in matched_rules.iterrows():
-                # 智能变量替换 (DIY的核心)
-                # 摘要处理
-                summary_text = str(rule["摘要模板"])
-                summary_text = summary_text.replace("{单位}", str(row[map_unit]))
-                summary_text = summary_text.replace("{金额}", str(row[map_amt]))
+            # --- 核心循环逻辑 ---
+            for idx, row in df.iterrows():
+                # 1. 提取当前行的业务关键词
+                biz_key = str(row[mapping['biz']]).strip()
                 
-                # 辅助核算处理
-                aux_text = str(rule["辅助核算"])
-                aux_text = aux_text.replace("{单位}", str(row[map_unit]))
-                aux_text = aux_text.replace("{部门}", str(row[map_unit])) # 假设部门也在单位列，或者用户自己扩展
+                # 2. 在规则库中查找所有匹配的行 (Filter)
+                # 这一步实现了“一个业务 -> 多行分录”
+                matched_rules = rules[rules["业务场景"] == biz_key]
+                
+                # 3. 失败拦截 (Fail-Fast)
+                if matched_rules.empty:
+                    errors.append({
+                        "原始行号": idx + 2,
+                        "业务内容": biz_key,
+                        "错误类型": "❌ 未定义规则",
+                        "解决办法": "请在 Tab 1 添加该业务场景的规则"
+                    })
+                    continue # 跳过此行
+                
+                # 4. 成功匹配，开始生成分录
+                current_voucher_no = f"{voucher_id:04d}" # 0001
+                
+                for _, r in matched_rules.iterrows():
+                    # --- A. 智能变量替换 (Abstract Parsing) ---
+                    # 摘要处理：将 {往来单位} 替换为 Excel 里的实际值
+                    memo = str(r["摘要模板"])
+                    # 支持替换用户指定的任何列
+                    for col_name in df.columns:
+                        if f"{{{col_name}}}" in memo:
+                            memo = memo.replace(f"{{{col_name}}}", str(row[col_name]))
+                    # 默认替换映射的列
+                    memo = memo.replace("{往来单位}", str(row[mapping['unit']]))
 
-                # 构建最终行
-                results.append({
-                    "凭证号": v_num,
-                    "日期": str(row[map_date]).split(" ")[0], # 只要日期部分
-                    "摘要": summary_text,
-                    "科目编码": rule["科目编码"],
-                    "借方金额": row[map_amt] if str(rule["借/贷"]) == "借" else 0,
-                    "贷方金额": row[map_amt] if str(rule["借/贷"]) == "贷" else 0,
-                    "辅助核算": aux_text
-                })
+                    # --- B. 辅助核算处理 ---
+                    aux = str(r["辅助核算"])
+                    if "{往来单位}" in aux:
+                        aux = str(row[mapping['unit']])
+                    
+                    # --- C. 金额计算 (Formula Eval) ---
+                    # 这是一个高级功能：支持简单的加减乘除
+                    try:
+                        base_amt = float(row[mapping['amt']])
+                        # 简单的 eval 安全处理，允许使用 '金额' 这个词
+                        calc_formula = str(r["取值公式"]).replace("金额", str(base_amt))
+                        final_amt = eval(calc_formula)
+                    except:
+                        final_amt = 0
+                        
+                    # --- D. 组装结果 ---
+                    results.append({
+                        "凭证号": current_voucher_no,
+                        "日期": str(row[mapping['date']]).split(" ")[0],
+                        "摘要": memo,
+                        "科目编码": r["科目编码"],
+                        "借方": round(final_amt, 2) if r["方向"] == "借" else 0,
+                        "贷方": round(final_amt, 2) if r["方向"] == "贷" else 0,
+                        "辅助核算": aux
+                    })
+                
+                # 处理完一行 Excel，凭证号 +1
+                voucher_id += 1
             
-            # 处理完一笔业务，凭证号+1
-            voucher_counter += 1
-
-        # ==========================================================
-        # 结果反馈区
-        # ==========================================================
-        if errors:
-            st.error(f"⚠️ 生成完成，但有 {len(errors)} 条数据失败！请查看下方诊断报告：")
-            st.dataframe(pd.DataFrame(errors), use_container_width=True)
-            st.markdown("### 🛠️ 怎么修复？")
-            st.markdown("1. 查看上方表格的**业务内容**。")
-            st.markdown("2. 回到**步骤 1**，在规则表里补上缺失的关键词规则。")
-            st.markdown("3. 再次点击生成按钮。")
-        else:
-            st.success(f"🎉 完美！成功生成 {len(df_raw)} 笔凭证，无任何错误。")
-
-        if results:
-            st.subheader("3️⃣ 结果预览与导出")
-            final_df = pd.DataFrame(results)
+            # --- 结果展示 ---
+            if errors:
+                st.markdown("### 🚫 诊断报告 (生成失败)")
+                st.dataframe(pd.DataFrame(errors), use_container_width=True)
+                st.error(f"警告：有 {len(errors)} 笔业务无法生成，请修正规则库后重试。")
             
-            # 预览
-            st.dataframe(final_df, use_container_width=True)
-            
-            # 导出
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                final_df.to_excel(writer, index=False)
-            
-            st.download_button(
-                label="📥 下载标准凭证 Excel (可以直接导入财务软件)",
-                data=output.getvalue(),
-                file_name="generated_vouchers_001.xlsx",
-                mime="application/vnd.ms-excel",
-                type="primary"
-            )
-
-else:
-    st.info("👋 请先上传 Excel 文件以开始工作。")
+            if results:
+                st.markdown("### ✅ 生成结果预览")
+                final_df = pd.DataFrame(results)
+                
+                # 提供最终编辑能力
+                final_df = st.data_editor(final_df, height=500, use_container_width=True)
+                
+                st.success(f"成功生成 {len(df)-len(errors)} 张凭证，共 {len(results)} 行分录。")
+                
+                # 导出
+                out = io.BytesIO()
+                with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+                    final_df.to_excel(writer, index=False)
+                
+                st.download_button(
+                    label="📥 导出最终凭证文件 (Excel)",
+                    data=out.getvalue(),
+                    file_name="Vouchers_Final.xlsx",
+                    mime="application/vnd.ms-excel",
+                    type="primary"
+                )
