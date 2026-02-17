@@ -2,125 +2,143 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(layout="wide", page_title="财务凭证自动化系统")
+st.set_page_config(layout="wide", page_title="智能财务凭证工厂")
 
-st.title("🚀 财务凭证自动化生成系统 (标准校验版)")
+st.title("🧮 智能财务凭证工厂 (全动态DIY版)")
 
-# --- 1. 侧边栏：定义规则表的标题 (完全 DIY) ---
+# --- 1. 侧边栏：标题 DIY 控制区 ---
 with st.sidebar:
-    st.header("🎨 1. 定义规则表标题")
-    t_biz = st.text_input("【业务类型】叫什么", "业务场景")
-    t_dir = st.text_input("【借贷方向】叫什么", "方向")
-    t_code = st.text_input("【科目编码】叫什么", "科目编号")
-    t_memo = st.text_input("【摘要模板】叫什么", "摘要内容")
-    t_aux = st.text_input("【辅助核算关联列】叫什么", "关联流水列")
+    st.header("🎨 1. 自定义规则标题")
+    st.info("在这里改名，右侧【规则设置】的表头会实时变化。")
+    t_biz = st.text_input("【业务类型】列名", "业务关键词")
+    t_dir = st.text_input("【借贷方向】列名", "借/贷")
+    t_code = st.text_input("【科目编码】列名", "科目号")
+    t_memo = st.text_input("【摘要模板】列名", "摘要内容")
+    t_aux = st.text_input("【辅助核算关联列】列名", "关联流水列")
 
     st.divider()
-    st.header("📋 2. 原始数据导入要求")
-    st.info("您的 Excel 必须包含以下三类信息：\n1. 日期\n2. 业务类型关键词\n3. 金额")
+    st.header("📖 2. 导入规范")
+    st.warning("上传的 Excel 必须包含：\n- **日期** (如: 2023/01/01)\n- **金额** (数字)\n- **业务关键词** (需匹配规则)")
 
-# --- 2. 初始化规则数据 ---
+# --- 2. 初始化规则表 (全动态行数) ---
 if 'rules' not in st.session_state:
     st.session_state.rules = pd.DataFrame([
-        {t_biz: "发货", t_dir: "借", t_code: "1122", t_memo: "发货给{客户}", t_aux: "客户"},
-        {t_biz: "发货", t_dir: "贷", t_code: "6001", t_memo: "销售收入", t_aux: ""}
+        {t_biz: "发货", t_dir: "借", t_code: "1122", t_memo: "发货-{客户}", t_aux: "客户"},
+        {t_biz: "发货", t_dir: "贷", t_code: "6001", t_memo: "销售收入", t_aux: ""},
+        {t_biz: "银行收汇", t_dir: "借", t_code: "1002", t_memo: "收到货款", t_aux: ""},
+        {t_biz: "银行收汇", t_dir: "贷", t_code: "1122", t_memo: "核销-{客户}", t_aux: "客户"},
     ])
 
-# 同步标题修改
+# 同步表头
 if list(st.session_state.rules.columns) != [t_biz, t_dir, t_code, t_memo, t_aux]:
     st.session_state.rules.columns = [t_biz, t_dir, t_code, t_memo, t_aux]
 
 # --- 3. 页面布局 ---
-tab1, tab2, tab3 = st.tabs(["⚙️ 规则 DIY 设置", "📥 数据导入与校验", "👁️ 结果预览与导出"])
+tab1, tab2, tab3 = st.tabs(["⚙️ 规则设置 (DIY)", "📥 数据导入与诊断", "👁️ 预览、修改与导出"])
 
-# --- TAB 1: 规则设置 ---
+# --- TAB 1: 规则设置 (行数可增删) ---
 with tab1:
-    st.subheader("设置您的分录规则")
-    st.markdown("在这里定义不同业务对应的会计分录。标题已根据左侧设置更新。")
-    st.session_state.rules = st.data_editor(st.session_state.rules, num_rows="dynamic", use_container_width=True)
+    st.subheader("🛠️ 自定义分录逻辑库")
+    st.markdown("""
+    **操作指南：**
+    - **修改标题**：在左侧侧边栏输入新名字。
+    - **增加规则行**：点击表格下方的 **`+` (Add row)** 按钮。
+    - **删除规则行**：选中行前面的复选框，按键盘 **Delete** 键。
+    - **修改内容**：直接双击单元格。
+    """)
+    # 开启 num_rows="dynamic" 允许用户无限增加科目种类
+    st.session_state.rules = st.data_editor(
+        st.session_state.rules, 
+        num_rows="dynamic", 
+        use_container_width=True,
+        key="rule_editor"
+    )
 
-# --- TAB 2: 导入与校验 ---
+# --- TAB 2: 数据导入与智能诊断 ---
 with tab2:
-    st.subheader("上传原始业务数据")
-    uploaded_file = st.file_uploader("支持 Excel (.xlsx) 格式", type=['xlsx'])
+    st.subheader("数据导入与合法性检查")
+    f = st.file_uploader("请上传您的业务流水 Excel", type=['xlsx'])
     
-    if uploaded_file:
-        df_raw = pd.read_excel(uploaded_file).fillna("")
+    if f:
+        df_raw = pd.read_excel(f).fillna("")
         raw_cols = df_raw.columns.tolist()
         
-        st.write("已成功读取文件，请匹配数据列：")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            map_date = st.selectbox("哪一列是【日期】？", raw_cols)
-        with col2:
-            map_biz = st.selectbox("哪一列是【业务类型】？", raw_cols)
-        with col3:
-            map_amt = st.selectbox("哪一列是【金额】？", raw_cols)
+        # 字段映射
+        st.write("🔍 **请告诉系统数据在哪一列：**")
+        c1, c2, c3 = st.columns(3)
+        with c1: m_date = st.selectbox("哪列是【日期】？", raw_cols)
+        with c2: m_biz = st.selectbox("哪列是【业务类型/关键词】？", raw_cols)
+        with c3: m_amt = st.selectbox("哪列是【金额】？", raw_cols)
             
-        if st.button("开始校验并生成凭证"):
-            errors = []
+        if st.button("🚀 运行诊断并生成预览"):
+            error_log = []
             vouchers = []
             
             for i, row in df_raw.iterrows():
-                biz_val = str(row[map_biz]).strip()
-                # 匹配规则
+                biz_val = str(row[m_biz]).strip()
+                # 寻找匹配
                 matches = st.session_state.rules[st.session_state.rules[t_biz] == biz_val]
                 
                 if matches.empty:
-                    errors.append(f"第 {i+2} 行：业务类型 '{biz_val}' 尚未定义分录规则。")
+                    error_log.append({
+                        "原始行号": i + 2,
+                        "业务内容": biz_val,
+                        "错误原因": "在规则表中未找到对应的分录逻辑",
+                        "解决办法": f"请在『规则设置』页面的【{t_biz}】列中增加一行“{biz_val}”"
+                    })
                     continue
                 
-                # 凭证号（一行原始数据一个号）
+                # 自动生成凭证号
                 v_no = str(i + 1).zfill(4)
                 
                 for _, r in matches.iterrows():
-                    # 摘要替换
+                    # 动态摘要替换
                     memo = str(r[t_memo])
                     for c in raw_cols:
                         if f"{{{c}}}" in memo: memo = memo.replace(f"{{{c}}}", str(row[c]))
                     
-                    # 辅助核算
+                    # 辅助项处理
                     aux_col = r[t_aux]
                     aux_val = row[aux_col] if aux_col in raw_cols else ""
 
                     vouchers.append({
                         "凭证号": v_no,
-                        "日期": str(row[map_date]).split(" ")[0],
+                        "日期": str(row[m_date]).split(" ")[0],
                         "摘要": memo,
                         "科目编码": r[t_code],
-                        "借方": row[map_amt] if r[t_dir] == '借' else 0,
-                        "贷方": row[map_amt] if r[t_dir] == '贷' else 0,
+                        "借方金额": row[m_amt] if r[t_dir] == '借' else 0,
+                        "贷方金额": row[m_amt] if r[t_dir] == '贷' else 0,
                         "辅助核算": aux_val
                     })
             
-            if errors:
-                st.error("⚠️ 导入存在问题：")
-                for err in errors: st.write(err)
-                st.warning("请在 TAB 1 补全缺失规则后重新点击生成。")
+            # 显示诊断报告
+            if error_log:
+                st.error("❌ 诊断发现错误：部分数据无法匹配规则")
+                st.table(pd.DataFrame(error_log))
+                st.warning("⚠️ **请按照上表的解决办法操作，补全规则后再重新生成。**")
             
             if vouchers:
-                st.session_state.final_df = pd.DataFrame(vouchers)
-                st.success(f"✅ 生成成功！共转换 {len(df_raw)} 笔业务。请前往预览。")
+                st.session_state.final_vouchers = pd.DataFrame(vouchers)
+                st.success(f"✅ 处理完成！共生成 {len(df_raw) - len(error_log)} 笔凭证。")
 
 # --- TAB 3: 预览与导出 ---
 with tab3:
-    if 'final_df' in st.session_state:
-        st.subheader("结果预览 (支持直接修改)")
-        st.info("您可以直接双击下方单元格修改任何内容（如科目、金额、摘要）。")
+    if 'final_vouchers' in st.session_state:
+        st.subheader("👀 结果预览 (支持直接修改)")
+        st.info("您可以直接双击下方任意单元格进行最后微调，改完后点击下载。")
         
-        # 结果编辑器
-        edited_df = st.data_editor(st.session_state.final_df, num_rows="dynamic", use_container_width=True, height=500)
+        final_edited = st.data_editor(
+            st.session_state.final_vouchers, 
+            num_rows="dynamic", 
+            use_container_width=True,
+            height=600
+        )
         
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            edited_df.to_excel(writer, index=False)
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+            final_edited.to_excel(writer, index=False)
         
         st.divider()
-        st.download_button(
-            label="📥 导出为好会计导入文件",
-            data=output.getvalue(),
-            file_name="好会计凭证导入表.xlsx",
-            mime="application/vnd.ms-excel"
-        )
+        st.download_button("📥 确认无误，导出好会计文件", data=out.getvalue(), file_name="好会计凭证包.xlsx")
     else:
-        st.info("暂无预览数据，请先完成第二步导入。")
+        st.info("暂无生成结果，请先在『数据导入』页面上传并运行。")
