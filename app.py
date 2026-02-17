@@ -2,127 +2,132 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(layout="wide", page_title="全维度财务凭证工厂")
+st.set_page_config(layout="wide", page_title="骨灰级财务DIY生成器")
 
-st.title("🏗️ 全维度财务凭证工厂 (列/行全自由DIY版)")
+st.title("🏗️ 骨灰级财务凭证生成器 (完全自定义列版)")
 
-# --- 1. 初始化逻辑：规则表现在完全是空的，由你来定义列 ---
-if 'rule_df' not in st.session_state:
-    # 初始只给最基础的 5 列作为模板
-    st.session_state.rule_df = pd.DataFrame([
-        {"业务关键词": "发货", "方向": "借", "科目编码": "1122", "摘要": "发货给{客户}", "辅助项": "{客户}"},
-        {"业务关键词": "发货", "方向": "贷", "科目编码": "6001", "摘要": "确认收入", "辅助项": ""},
-    ])
+# --- 1. 这里是你的“司令部”：想加减列，直接在这里改文字 ---
+# 修改这里的列表，网页上的表格列会立刻同步增减
+if 'columns_list' not in st.session_state:
+    st.session_state.columns_list = ["业务关键词", "方向", "科目编码", "科目名称", "摘要模板", "辅助单位", "项目信息"]
 
-# --- 2. 侧边栏：映射中心 (无论你把列改成什么名字，在这里指定一下) ---
+# --- 2. 侧边栏：让系统知道哪一列是干嘛的 ---
 with st.sidebar:
-    st.header("⚙️ 1. 定义核心功能列")
-    st.info("请在右侧表格修改/增加列，完成后在此处指定对应关系：")
+    st.header("🛠️ 1. 指定功能列")
+    st.info("如果修改了右侧的表头，请在这里对齐关系。")
     
-    current_rule_cols = st.session_state.rule_df.columns.tolist()
+    # 动态获取当前所有列
+    cols = st.session_state.columns_list
     
-    # 动态映射：让系统知道哪一列负责什么
-    map_biz = st.selectbox("哪一列代表【业务关键词】？", current_rule_cols, index=0)
-    map_dir = st.selectbox("哪一列代表【借/贷方向】？", current_rule_cols, index=1)
-    map_code = st.selectbox("哪一列代表【科目编码】？", current_rule_cols, index=2)
-    map_memo = st.selectbox("哪一列代表【摘要内容】？", current_rule_cols, index=3)
-    map_aux = st.selectbox("哪一列代表【辅助核算】？", current_rule_cols, index=4)
-
+    m_biz = st.selectbox("哪列是【业务关键词】？", cols, index=0)
+    m_dir = st.selectbox("哪列是【方向(借/贷)】？", cols, index=1)
+    m_code = st.selectbox("哪列是【科目编码】？", cols, index=2)
+    m_memo = st.selectbox("哪列是【摘要模板】？", cols, index=4)
+    
     st.divider()
-    st.header("📂 2. 原始数据映射")
-    st.caption("上传流水后，匹配流水表的关键信息")
+    st.header("📋 2. 导入与诊断说明")
+    st.write("- 流水表必须有：日期、业务名、金额。")
+    st.write("- 摘要模板支持 `{列名}` 自动抓取。")
 
-# --- 3. 标签页设计 ---
-tab1, tab2, tab3 = st.tabs(["📋 1. 自由定义规则 (增删列/行)", "📥 2. 诊断导入与生成", "👁️ 3. 预览、微调与导出"])
+# --- 3. 初始化规则数据 ---
+if 'rules_data' not in st.session_state:
+    # 根据上面的初始列创建一个默认行
+    init_row = {c: "" for c in cols}
+    init_row[cols[0]] = "发货"
+    init_row[cols[1]] = "借"
+    st.session_state.rules_data = pd.DataFrame([init_row])
 
-# --- TAB 1: 真正的自由 DIY ---
+# 检查列是否同步
+if list(st.session_state.rules_data.columns) != cols:
+    # 如果列变了，重新调整 DataFrame 结构但不丢失数据
+    st.session_state.rules_data = st.session_state.rules_data.reindex(columns=cols).fillna("")
+
+# --- 4. 标签页 ---
+tab1, tab2, tab3 = st.tabs(["⚙️ 规则设置 (行/列管理)", "📥 数据导入与智能诊断", "👁️ 预览、修改与导出"])
+
 with tab1:
-    st.subheader("🛠️ 规则工厂")
-    st.markdown("""
-    **在这里，你可以像操作 Excel 一样：**
-    - **增加/删除行**：点击表格下方的 `+` 或选中行按 `Delete`。
-    - **增加/删除列**：右键点击表头，选择 **`Insert column`** 或 **`Delete column`**。
-    - **改列名**：双击表头即可直接修改标题。
-    - **重要**：改完后，请务必在**左侧侧边栏**检查映射是否正确。
-    """)
-    
-    # 开启全功能编辑
-    st.session_state.rule_df = st.data_editor(
-        st.session_state.rule_df, 
-        num_rows="dynamic", # 动态行
-        use_container_width=True,
-        column_config={col: st.column_config.TextColumn(col) for col in st.session_state.rule_df.columns} 
+    st.subheader("定义分录逻辑")
+    # 这里我们用文本框让用户“增加/删除列名”
+    new_cols_str = st.text_area("🔧 修改列名（用中文逗号或英文逗号隔开）：", value=",".join(cols))
+    if st.button("💾 更新列结构"):
+        st.session_state.columns_list = [c.strip() for c in new_cols_str.replace("，", ",").split(",")]
+        st.rerun()
+
+    st.markdown("---")
+    # 动态表格编辑
+    st.session_state.rules_data = st.data_editor(
+        st.session_state.rules_data, 
+        num_rows="dynamic", 
+        use_container_width=True
     )
 
-# --- TAB 2: 数据导入与深度诊断 ---
 with tab2:
-    st.subheader("上传业务数据")
-    f = st.file_uploader("请上传 Excel (.xlsx)", type=['xlsx'])
-    
+    f = st.file_uploader("上传业务 Excel", type=['xlsx'])
     if f:
         df_raw = pd.read_excel(f).fillna("")
         raw_cols = df_raw.columns.tolist()
         
-        # 让用户映射流水表的关键列
+        # 映射流水列
         c1, c2, c3 = st.columns(3)
         with c1: d_date = st.selectbox("流水：日期列", raw_cols)
-        with c2: d_biz = st.selectbox("流水：业务关键词列", raw_cols)
+        with c2: d_biz = st.selectbox("流水：业务类型列", raw_cols)
         with c3: d_amt = st.selectbox("流水：金额列", raw_cols)
             
-        if st.button("🚀 开始生成并诊断"):
-            diags = []
+        if st.button("🚀 运行诊断并生成结果"):
             results = []
+            errors = []
             
             for i, row in df_raw.iterrows():
                 biz_key = str(row[d_biz]).strip()
-                # 在规则表里找匹配的所有分录
-                matched = st.session_state.rule_df[st.session_state.rule_df[map_biz] == biz_key]
+                matches = st.session_state.rules_data[st.session_state.rules_data[m_biz] == biz_key]
                 
-                if matched.empty:
-                    diags.append({"行号": i+2, "内容": biz_key, "状态": "❌ 缺失规则", "对策": "请在规则页新增此业务"})
+                if matches.empty:
+                    errors.append({"行号": i+2, "业务名": biz_key, "原因": "规则库没定义这个业务"})
                     continue
                 
-                # 凭证号逻辑：流水表的一行对应一个号
                 v_no = str(i + 1).zfill(4)
                 
-                for _, r in matched.iterrows():
-                    # 摘要与辅助项支持多字段动态替换
-                    def smart_replace(text):
-                        text = str(text)
-                        for col in raw_cols:
-                            if f"{{{col}}}" in text:
-                                text = text.replace(f"{{{col}}}", str(row[col]))
-                        return text
+                for _, r in matches.iterrows():
+                    # 自动抓取辅助核算：把规则表里除了核心功能列之外的所有列，都作为辅助项拼起来
+                    # 摘要处理
+                    memo = str(r[m_memo])
+                    for rc in raw_cols:
+                        if f"{{{rc}}}" in memo: memo = memo.replace(f"{{{rc}}}", str(row[rc]))
+                    
+                    # 动态抓取所有非核心列作为辅助信息
+                    aux_info = []
+                    for c in cols:
+                        if c not in [m_biz, m_dir, m_code, m_memo]:
+                            val = str(r[c])
+                            # 如果规则里写了 {单位}，就去流水里抓
+                            for rc in raw_cols:
+                                if f"{{{rc}}}" in val: val = val.replace(f"{{{rc}}}", str(row[rc]))
+                            if val: aux_info.append(f"{c}:{val}")
 
                     results.append({
                         "凭证号": v_no,
                         "日期": str(row[d_date]).split(" ")[0],
-                        "摘要": smart_replace(r[map_memo]),
-                        "科目编码": r[map_code],
-                        "借方": row[d_amt] if r[map_dir] == "借" else 0,
-                        "贷方": row[d_amt] if r[map_dir] == "贷" else 0,
-                        "辅助核算": smart_replace(r[map_aux])
+                        "摘要": memo,
+                        "科目编码": r[m_code],
+                        "借方": row[d_amt] if r[m_dir] == "借" else 0,
+                        "贷方": row[d_amt] if r[m_dir] == "贷" else 0,
+                        "辅助核算": " | ".join(aux_info)
                     })
             
-            if diags:
-                st.error("诊断报告：发现无法生成的行")
-                st.table(pd.DataFrame(diags))
+            if errors:
+                st.error("❌ 诊断报告：请修复以下业务规则")
+                st.table(pd.DataFrame(errors))
             
             if results:
-                st.session_state.final_vouchers = pd.DataFrame(results)
-                st.success(f"✅ 生成完毕！成功转换 {len(df_raw)-len(diags)} 笔业务。")
+                st.session_state.final_res = pd.DataFrame(results)
+                st.success("✅ 生成预览成功！")
 
-# --- TAB 3: 预览与微调 ---
 with tab3:
-    if 'final_vouchers' in st.session_state:
-        st.subheader("结果预览 (所见即所得)")
-        st.info("💡 提示：你可以直接在这里修改凭证号实现『合单』或『分单』，或者修改任意摘要和金额。")
+    if 'final_res' in st.session_state:
+        st.subheader("凭证修改与导出")
+        final_edited = st.data_editor(st.session_state.final_res, num_rows="dynamic", use_container_width=True)
         
-        # 结果编辑器同样支持动态修改
-        edited_df = st.data_editor(st.session_state.final_vouchers, num_rows="dynamic", use_container_width=True, height=500)
-        
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            edited_df.to_excel(writer, index=False)
-        
-        st.download_button("📥 导出修改后的文件", data=output.getvalue(), file_name="好会计导入文件.xlsx")
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+            final_edited.to_excel(writer, index=False)
+        st.download_button("📥 点击下载导入文件", data=out.getvalue(), file_name="好会计凭证.xlsx")
